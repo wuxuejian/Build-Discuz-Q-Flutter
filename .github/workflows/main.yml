@@ -1,0 +1,131 @@
+#=================================================
+# https://github.com/naizhao/Build-Discuz-Q-Flutter
+# Description: Build Discuz! Q Flutter APP using GitHub Actions
+# Lisence: MIT
+# Author: @naizhao
+# Blog: https://吴.中国
+#=================================================
+
+name: Build Discuz-Q-APP
+
+on:
+#  release:
+#    types: published
+  push:
+    branches:
+      - master
+#    paths:
+#      - '.config'
+  schedule:
+    - cron: 0 0 * * *
+#    watch:
+#      types: started
+
+env:
+  REPO_URL: https://github.com/virskor/DiscuzQ
+  REPO_BRANCH: master
+  SSH_ACTIONS: false
+  TZ: Asia/Shanghai
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
+
+    - name: Initialization Java
+      uses: actions/setup-java@v1
+      with:
+        java-version: '14.x'
+
+    - name: Initialization Flutter
+      uses: subosito/flutter-action@v1.2.0
+      with:
+        channel: 'dev'
+
+    - name: Clone source code
+      run: |
+        git clone $REPO_URL -b $REPO_BRANCH Discuz-Q-APP
+    - name: Setup build environment
+      run: |
+        echo "current workspace: "${{ github.workspace }}
+        cd Discuz-Q-APP/discuz
+        echo "::set-env name=DISCUZ_HOME::$PWD"
+        cat >> android/key.properties <<EOF
+        storePassword=naizhao
+        keyPassword=naizhao
+        keyAlias=key
+        storeFile=../android.keystore
+        EOF
+        cat android/key.properties
+        cp ../../android.keystore android/android.keystore
+        rm -rf ./build.yaml
+        cp ../../build.yaml ./build.yaml
+        rm -rf ./assets/images/app.png
+        rm -rf ./assets/images/splash.png
+        cp ../../discuz-q-logo.png ./assets/images/app.png
+        cp ../../discuz-q-splash.png ./assets/images/splash.png
+        sed -i '' 's/discuzq/Discuz! Q/g' web/manifest.json
+        sed -i '' 's/discuzq/Discuz! Q/g' android/app/src/main/AndroidManifest.xml
+    - name: Build Android version
+      run: |
+        df -lh
+        cd Discuz-Q-APP/discuz
+        flutter pub get
+        flutter pub run flutter_launcher_icons:main
+        flutter pub pub run flutter_native_splash:create
+        flutter build apk --release --no-shrink
+        df -lh
+        ls -lha
+        ls -lha build
+    # - name: Build iOS version
+    #   run: |
+    #     df -lh
+    #     echo "current path: "`pwd`
+    #     cd Discuz-Q-APP/discuz
+    #     flutter clean
+    #     flutter pub get
+    #     cd ios
+    #     rm -rf Podfile.lock
+    #     pod install
+    #     cd ..
+    #     flutter build ios
+
+    - name: Assemble artifact & release
+      run: |
+        rm -rf ./artifact/ ./release/
+        mkdir -p ./artifact/
+        mkdir -p ./release/
+        mv ./Discuz-Q-APP/discuz/build/app/outputs/apk/release/app-release.apk ./artifact/release-${{ github.run_number }}-android.apk
+        zip -j ./release/Release-${{ github.run_number }}-Android.zip ./artifact/release-${{ github.run_number }}-android.apk
+        ls ./artifact/
+        ls ./release/
+    - name: Upload packages to directory
+      uses: actions/upload-artifact@master
+      with:
+        name: Discuz-Q-APP
+        path: ./artifact/
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: release-v${{ github.run_number }}
+        release_name: Release ${{ github.run_number }}
+        draft: false
+        prerelease: false
+   
+    - name: Upload Release Asset
+      id: upload-release-asset 
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./artifact/release-${{ github.run_number }}-android.apk
+        asset_name: app-release-v${{ github.run_number }}-android.apk
+        asset_content_type: application/zip
